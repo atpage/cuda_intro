@@ -38,10 +38,10 @@ __device__ uchar average_3x3(uchar *old_image_G, int px_x, int px_y) {
 
   int i,j;
   for (i=px_y-1; i<=px_y+1; i++) {  // loop over 3 rows
-    if ((i<0) || (i>=image_height_G)) { continue; }
+    if ((i < 0) || (i >= image_height_G)) { continue; }
     for (j=px_x-1; j<=px_x+1; j++) {  // loop over 3 cols
       if ((j < 0) || (j >= image_width_G)) { continue; }
-      total += old_image_G[ i*image_width_G+j ];  // old_image_G[i][j];
+      total += old_image_G[ i*image_width_G+j ];  // read from old_image_G[i][j];
       px_used++;
     }
   }
@@ -54,6 +54,7 @@ __device__ uchar average_3x3(uchar *old_image_G, int px_x, int px_y) {
 // This one uses global memory, and 1d thread/block indexing:
 __global__ void avg_filter(uchar *old_image_G, uchar *new_image_G) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;  // 1d index into image
+  if (idx >= image_height_G*image_width_G) { return; }  // off image
   int px_x = idx % image_width_G;  // column of image
   int px_y = idx / image_width_G;  // row of image
   new_image_G[idx] = average_3x3(old_image_G, px_x, px_y);
@@ -64,11 +65,12 @@ __global__ void avg_filter(uchar *old_image_G, uchar *new_image_G) {
 __global__ void avg_filter_2D(uchar *old_image_G, uchar *new_image_G) {
   int px_x = blockIdx.x * blockDim.x + threadIdx.x;  // column of image
   int px_y = blockIdx.y * blockDim.y + threadIdx.y;  // row of image
+  if ((px_x >= image_width_G) || (px_y >= image_height_G)) { return; }  // off image
   new_image_G[px_y*image_width_G+px_x] = average_3x3(old_image_G, px_x, px_y);
   //new_image_G[px_x][px_y] = average_3x3(px_x, px_y);
 }
-// The 2D version actually seems slightly *slower* than the 1D.  Apparently,
-// cache isn't helping us.
+// The 2D version seems to be about the same speed as the 1D version.
+// Apparently cache isn't helping us.
 
 /*
 // Replace each pixel with a smoothed value.  (shared memory version,
@@ -186,15 +188,17 @@ int main(int argc, char *argv[])
   checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
   checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
 
-  // Run the kernel. (float) and 0.5 stuff when calculating grid dimensions is
-  // to get ceil(), so we don't miss the last part(s) of the image:
+  // Set GPU output to zero (optional):
+  //checkCudaErrors( cudaMemset(new_image_G, 0, image_size) );
+
+  // Run the kernel.  ceil() so we don't miss the end(s) of the image:
   if (mode == 2) {
-    avg_filter<<<(float)image_size/(float)256+0.5,256>>>(old_image_G, new_image_G);
+    avg_filter<<< ceil((float)image_size/256), 256 >>>(old_image_G, new_image_G);
   }
   if (mode == 3) {
     dim3 block_dim = dim3(32, 32);
-    dim3 grid_dim = dim3((float)image_width / (float)block_dim.x + 0.5,
-			 (float)image_height / (float)block_dim.y + 0.5);
+    dim3 grid_dim = dim3( ceil((float)image_width / block_dim.x),
+    			  ceil((float)image_height / block_dim.y) );
     avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
   }
   getLastCudaError("Kernel execution failed (avg_filter).");
@@ -206,7 +210,8 @@ int main(int argc, char *argv[])
 				image_size*sizeof(uchar),
 				cudaMemcpyDeviceToHost )  );
 
-  // Save the output to disk:
+  ////////////////////////// Save the output to disk: //////////////////////////
+
   Mat result = Mat(image_height, image_width, CV_8UC1, new_image);
   string output_filename = argv[2];
   if (!imwrite(output_filename, result)) {
@@ -216,12 +221,15 @@ int main(int argc, char *argv[])
   printf("Saved image '%s', size = %dx%d (dims = %d).\n",
 	 output_filename.c_str(), result.rows, result.cols, result.dims);
 
-  // Clean up:
+  ///////////////////////////// Clean up and exit: /////////////////////////////
+
   free(new_image);
   checkCudaErrors( cudaFree(new_image_G) );
   checkCudaErrors( cudaFree(old_image_G) );
+
   checkCudaErrors( cudaDeviceReset() );
 
-  // Done.
   exit(EXIT_SUCCESS);
 }
+
+//////////////////////////////////// Done. /////////////////////////////////////

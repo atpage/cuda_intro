@@ -11,3 +11,4 @@ This code is designed to walk you through optimizing an example GPU application,
 
 * Finish slides
 * Put all slide examples into code
+* Add timing to each thing

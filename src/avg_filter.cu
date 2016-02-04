@@ -2,7 +2,6 @@
 ////////////////////////////////// Includes: ///////////////////////////////////
 
 #include <stdio.h>
-//#include <unistd.h>
 
 // CUDA stuff:
 #include "cuda_runtime.h"
@@ -54,6 +53,10 @@ __device__ uchar average_3x3(uchar *old_image_G, int px_x, int px_y) {
 // Replace each pixel with a smoothed value.
 // This one uses global memory, and 1d thread/block indexing:
 __global__ void avg_filter(uchar *old_image_G, uchar *new_image_G) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;  // 1d index into image
+  int px_x = idx % image_width_G;  // column of image
+  int px_y = idx / image_width_G;  // row of image
+  new_image_G[idx] = average_3x3(old_image_G, px_x, px_y);
 }
 
 // Replace each pixel with a smoothed value.
@@ -64,6 +67,8 @@ __global__ void avg_filter_2D(uchar *old_image_G, uchar *new_image_G) {
   new_image_G[px_y*image_width_G+px_x] = average_3x3(old_image_G, px_x, px_y);
   //new_image_G[px_x][px_y] = average_3x3(px_x, px_y);
 }
+// The 2D version actually seems slightly *slower* than the 1D.  Apparently,
+// cache isn't helping us.
 
 /*
 // Replace each pixel with a smoothed value.  (shared memory version,
@@ -125,6 +130,10 @@ int main(int argc, char *argv[])
 {
   if ( argc != 4 ) {
     printf("Usage: %s <input image> <output image> <mode>\n", argv[0]);
+    printf("       mode 0 = CPU, single thread\n");
+    printf("       mode 1 = CPU, 4 threads\n");
+    printf("       mode 2 = GPU, global memory\n");
+    printf("       mode 3 = CPU, global memory, 2d grid\n");
     exit(EXIT_FAILURE);
   }
 
@@ -138,6 +147,7 @@ int main(int argc, char *argv[])
     exit(EXIT_FAILURE);
   }
   printf("Loaded image '%s', size = %dx%d (dims = %d).\n", argv[1], image.rows, image.cols, image.dims);
+  int mode = atoi(argv[3]);
 
   // Set up global variables based on image size:
   image_height = image.rows;
@@ -156,6 +166,8 @@ int main(int argc, char *argv[])
 
   ///////////////////////////////// GPU code: //////////////////////////////////
 
+  // TODO: only come in here if mode>1
+  
   // Choose the fastest GPU (optional):
   int devID = gpuGetMaxGflopsDeviceId();
   checkCudaErrors( cudaSetDevice(devID) );
@@ -174,10 +186,17 @@ int main(int argc, char *argv[])
   checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
   checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
 
-  // Run the kernel:
-  dim3 block_dim = dim3(32, 32);
-  dim3 grid_dim = dim3(image_width / block_dim.x, image_height / block_dim.y);  // TODO: round up
-  avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
+  // Run the kernel. (float) and 0.5 stuff when calculating grid dimensions is
+  // to get ceil(), so we don't miss the last part(s) of the image:
+  if (mode == 2) {
+    avg_filter<<<(float)image_size/(float)256+0.5,256>>>(old_image_G, new_image_G);
+  }
+  if (mode == 3) {
+    dim3 block_dim = dim3(32, 32);
+    dim3 grid_dim = dim3((float)image_width / (float)block_dim.x + 0.5,
+			 (float)image_height / (float)block_dim.y + 0.5);
+    avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
+  }
   getLastCudaError("Kernel execution failed (avg_filter).");
   // checkCudaErrors( cudaDeviceSynchronize() );  // not needed
 

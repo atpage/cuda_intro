@@ -72,6 +72,16 @@ __global__ void avg_filter_2D(uchar *old_image_G, uchar *new_image_G) {
 // The 2D version seems to be about the same speed as the 1D version.
 // Apparently cache isn't helping us.
 
+// Replace each pixel with a smoothed value.  Start at offset into image, not 0.
+// This one uses global memory, and 1d thread/block indexing:
+__global__ void avg_filter_part(uchar *old_image_G, uchar *new_image_G, int offset) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x + offset;  // 1d index into image
+  if (idx >= image_height_G*image_width_G) { return; }  // off image
+  int px_x = idx % image_width_G;  // column of image
+  int px_y = idx / image_width_G;  // row of image
+  new_image_G[idx] = average_3x3(old_image_G, px_x, px_y);
+}
+
 /*
 // Replace each pixel with a smoothed value.  (shared memory version,
 // each thread probably has many pixels to process)
@@ -134,8 +144,9 @@ int main(int argc, char *argv[])
     printf("Usage: %s <input image> <output image> <mode>\n", argv[0]);
     printf("       mode 0 = CPU, single thread\n");
     printf("       mode 1 = CPU, 4 threads\n");
-    printf("       mode 2 = GPU, global memory\n");
-    printf("       mode 3 = CPU, global memory, 2d grid\n");
+    printf("       mode 2 = GPU, global memory, 1d grid\n");
+    printf("       mode 3 = GPU, global memory, 2d grid\n");
+    printf("       mode 4 = GPU, global memory, 1d grid, 4 streams\n");
     exit(EXIT_FAILURE);
   }
 
@@ -160,7 +171,14 @@ int main(int argc, char *argv[])
   //int chunk_size = image_size / N;
 
   // Prepare CPU output array:
-  new_image = (uchar*)malloc( image_height*image_width*sizeof(uchar) );
+  if (mode != 4) {
+    new_image = (uchar*)malloc( image_height*image_width*sizeof(uchar) );
+  }
+  else if (mode == 4) {
+    // need to use pinned memory for streaming
+    checkCudaErrors( cudaMallocHost((void**)&new_image, image_height*image_width*sizeof(uchar)) );
+  }
+
   if (new_image == NULL) {
     fprintf(stderr, "Can't malloc space for new_image.  Exiting abruptly.\n");
     exit(EXIT_FAILURE);
@@ -179,37 +197,81 @@ int main(int argc, char *argv[])
   checkCudaErrors( cudaMalloc((void**)&old_image_G,image_size*sizeof(uchar)) );
   checkCudaErrors( cudaMalloc((void**)&new_image_G,image_size*sizeof(uchar)) );
 
-  // Copy CPU data to GPU:
-  checkCudaErrors(  cudaMemcpy( old_image_G,
-				image.data,
-				image_size*sizeof(uchar),
-				cudaMemcpyHostToDevice )  );
-
-  checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
-  checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
-
   // Set GPU output to zero (optional):
   //checkCudaErrors( cudaMemset(new_image_G, 0, image_size) );
 
-  // Run the kernel.  ceil() so we don't miss the end(s) of the image:
-  if (mode == 2) {
-    avg_filter<<< ceil((float)image_size/256), 256 >>>(old_image_G, new_image_G);
-  }
-  if (mode == 3) {
-    dim3 block_dim = dim3(32, 32);
-    dim3 grid_dim = dim3( ceil((float)image_width / block_dim.x),
-    			  ceil((float)image_height / block_dim.y) );
-    avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
-  }
-  getLastCudaError("Kernel execution failed (avg_filter).");
-  // checkCudaErrors( cudaDeviceSynchronize() );  // not needed
+  // Copy CPU variables to GPU:
+  checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
+  checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
 
-  // Copy result back:
-  checkCudaErrors(  cudaMemcpy( new_image,
-				new_image_G,
-				image_size*sizeof(uchar),
-				cudaMemcpyDeviceToHost )  );
+  if ((mode == 2) || (mode == 3)) { ////////// Non-streaming examples //////////
 
+    // Copy input image to GPU:
+    checkCudaErrors(  cudaMemcpy( old_image_G,
+				  image.data,
+				  image_size*sizeof(uchar),
+				  cudaMemcpyHostToDevice )  );
+    
+    // Run the kernel.  ceil() so we don't miss the end(s) of the image:
+    if (mode == 2) {
+      avg_filter<<< ceil((float)image_size/256), 256 >>>(old_image_G, new_image_G);
+    }
+    else if (mode == 3) {
+      dim3 block_dim = dim3(32, 32);
+      dim3 grid_dim = dim3( ceil((float)image_width / block_dim.x),
+			    ceil((float)image_height / block_dim.y) );
+      avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
+    }
+    getLastCudaError("Kernel execution failed (avg_filter).");
+    
+    // Copy result back from GPU:
+    checkCudaErrors(  cudaMemcpy( new_image,
+				  new_image_G,
+				  image_size*sizeof(uchar),
+				  cudaMemcpyDeviceToHost )  );
+  }
+
+  else if (mode == 4) { ////////////////// Streaming example ///////////////////
+
+    // Prepare streams:
+    int nStreams = 4;
+    cudaStream_t stream[nStreams];
+    for (int i = 0; i < nStreams; i++) {
+      checkCudaErrors( cudaStreamCreate(&stream[i]) );
+    }
+
+    // do {copy to device, launch kernel, copy to host} for each stream:
+    for (int i = 0; i < nStreams; i++) {
+      // note, we assume image size is evenly divisible by nStreams
+      int offset = i * image_size*sizeof(uchar)/nStreams;
+
+      checkCudaErrors(  cudaMemcpyAsync( &old_image_G[offset],               // to
+					 &image.data[offset],                // from
+					 image_size*sizeof(uchar)/nStreams,  // size
+					 cudaMemcpyHostToDevice,             // direction
+					 stream[i] )  );                     // stream
+
+      avg_filter_part<<< ceil((float)image_size/256/nStreams), 256, 0, stream[i] >>>
+	(old_image_G, new_image_G, offset);
+      // TODO: will probably want getLastCudaError() here
+
+      checkCudaErrors(  cudaMemcpyAsync( &new_image[offset],
+					 &new_image_G[offset],
+					 image_size*sizeof(uchar)/nStreams,
+					 cudaMemcpyDeviceToHost,
+					 stream[i])  );
+
+      // Note: may read garbage due to boundary conditions.  TODO: fix.
+    }
+
+    // checkCudaErrors( cudaDeviceSynchronize() );  // TODO?
+
+    // Destroy streams:
+    for (int i = 0; i < nStreams; i++) {
+      checkCudaErrors( cudaStreamDestroy(stream[i]) );
+    }
+  }
+  
   ////////////////////////// Save the output to disk: //////////////////////////
 
   Mat result = Mat(image_height, image_width, CV_8UC1, new_image);
@@ -223,10 +285,15 @@ int main(int argc, char *argv[])
 
   ///////////////////////////// Clean up and exit: /////////////////////////////
 
-  free(new_image);
+  if (mode != 4) {
+    free(new_image);
+  }
+  else if (mode == 4) {
+    checkCudaErrors( cudaFreeHost(new_image) );
+  }
+  
   checkCudaErrors( cudaFree(new_image_G) );
   checkCudaErrors( cudaFree(old_image_G) );
-
   checkCudaErrors( cudaDeviceReset() );
 
   exit(EXIT_SUCCESS);

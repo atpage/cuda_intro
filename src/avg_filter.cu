@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
   ///////////////////////////////// GPU code: //////////////////////////////////
 
   // TODO: only come in here if mode>1
-  
+
   // Choose the fastest GPU (optional):
   int devID = gpuGetMaxGflopsDeviceId();
   checkCudaErrors( cudaSetDevice(devID) );
@@ -211,7 +211,7 @@ int main(int argc, char *argv[])
 				  image.data,
 				  image_size*sizeof(uchar),
 				  cudaMemcpyHostToDevice )  );
-    
+
     // Run the kernel.  ceil() so we don't miss the end(s) of the image:
     if (mode == 2) {
       avg_filter<<< ceil((float)image_size/256), 256 >>>(old_image_G, new_image_G);
@@ -223,7 +223,7 @@ int main(int argc, char *argv[])
       avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
     }
     getLastCudaError("Kernel execution failed (avg_filter).");
-    
+
     // Copy result back from GPU:
     checkCudaErrors(  cudaMemcpy( new_image,
 				  new_image_G,
@@ -245,11 +245,12 @@ int main(int argc, char *argv[])
       // note, we assume image size is evenly divisible by nStreams
       int offset = i * image_size*sizeof(uchar)/nStreams;
 
-      checkCudaErrors(  cudaMemcpyAsync( &old_image_G[offset],               // to
-					 &image.data[offset],                // from
-					 image_size*sizeof(uchar)/nStreams,  // size
-					 cudaMemcpyHostToDevice,             // direction
-					 stream[i] )  );                     // stream
+      checkCudaErrors(  cudaMemcpyAsync( &old_image_G[offset],
+					 &image.data[offset],
+					 image_size*sizeof(uchar)/nStreams,
+					 cudaMemcpyHostToDevice,
+					 stream[i] )  );
+      // TODO: copy a bit extra to handle boundaries
 
       avg_filter_part<<< ceil((float)image_size/256/nStreams), 256, 0, stream[i] >>>
 	(old_image_G, new_image_G, offset);
@@ -260,18 +261,18 @@ int main(int argc, char *argv[])
 					 image_size*sizeof(uchar)/nStreams,
 					 cudaMemcpyDeviceToHost,
 					 stream[i])  );
-
-      // Note: may read garbage due to boundary conditions.  TODO: fix.
     }
 
-    // checkCudaErrors( cudaDeviceSynchronize() );  // TODO?
+    checkCudaErrors( cudaDeviceSynchronize() );  // wait for all CUDA calls to
+						 // finish.  may be unnecessary,
+						 // if cudaStreamDestroy waits.
 
     // Destroy streams:
     for (int i = 0; i < nStreams; i++) {
       checkCudaErrors( cudaStreamDestroy(stream[i]) );
     }
   }
-  
+
   ////////////////////////// Save the output to disk: //////////////////////////
 
   Mat result = Mat(image_height, image_width, CV_8UC1, new_image);
@@ -291,7 +292,7 @@ int main(int argc, char *argv[])
   else if (mode == 4) {
     checkCudaErrors( cudaFreeHost(new_image) );
   }
-  
+
   checkCudaErrors( cudaFree(new_image_G) );
   checkCudaErrors( cudaFree(old_image_G) );
   checkCudaErrors( cudaDeviceReset() );

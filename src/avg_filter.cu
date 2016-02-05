@@ -27,6 +27,7 @@ uchar *old_image_G;
 uchar *new_image_G;
 __constant__ int image_height_G;
 __constant__ int image_width_G;
+// TODO: test speedup from using constant memory
 
 ////////////////////////// GPU functions and kernels: //////////////////////////
 
@@ -263,13 +264,10 @@ int main(int argc, char *argv[])
 					 stream[i])  );
     }
 
-    checkCudaErrors( cudaDeviceSynchronize() );  // wait for all CUDA calls to
-						 // finish.  may be unnecessary,
-						 // if cudaStreamDestroy waits.
-
     // Destroy streams:
     for (int i = 0; i < nStreams; i++) {
       checkCudaErrors( cudaStreamDestroy(stream[i]) );
+      // cudaStreamDestroy() blocks until all commands in given stream complete
     }
   }
 

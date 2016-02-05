@@ -10,5 +10,7 @@ This code is designed to walk you through optimizing an example GPU application,
 ## TODO
 
 * Finish slides
-* Put all slide examples into code
+* Make shared memory example
+* Make CPU example(s)
 * Add timing to each thing
+* Libraries (how to use, how to make our own)

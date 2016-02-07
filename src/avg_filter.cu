@@ -204,7 +204,9 @@ int main(int argc, char *argv[])
   checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
   checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
 
-  if ((mode >= 2) && (mode <= 5)) { ////////// Non-streaming examples //////////
+  if ((mode == 2) || 
+      (mode == 3) || 
+      (mode == 5)) { ///////////////// Non-streaming examples //////////////////
 
     // Copy input image to GPU:
     checkCudaErrors(  cudaMemcpy( old_image_G,

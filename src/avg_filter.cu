@@ -17,7 +17,7 @@ using namespace cv;
 
 // These are really only global to match/simplify the pseudocode in the slides.
 
-uchar *old_image;  // original image, CPU-side
+uchar *old_image;  // original image, CPU-side.  we don't actually use this.
 uchar *new_image;  // processed image, CPU-side
 int image_height;  // number of rows in image
 int image_width;   // number of columns in image
@@ -135,7 +135,29 @@ __global__ void avg_filter_shared(uchar *old_image_G, uchar *new_image_G) {
   // TODO: handle borders of image, i.e. when px_x==0 and so on
 }
 
-////////////////////////////////// CPU code: ///////////////////////////////////
+/////////////////////////////// CPU functions: /////////////////////////////////
+
+// Average the pixels in a 3*3 box around pixel (px_x,px_y) of old_image.
+// Pixels that fall outside of the image will be excluded from the average.
+uchar average_3x3_CPU(uchar *old_image, int px_x, int px_y) {
+  float total = 0;
+  int px_used = 0;
+
+  int i,j;
+  for (i=px_y-1; i<=px_y+1; i++) {  // loop over 3 rows
+    if ((i < 0) || (i >= image_height)) { continue; }
+    for (j=px_x-1; j<=px_x+1; j++) {  // loop over 3 cols
+      if ((j < 0) || (j >= image_width)) { continue; }
+      total += old_image[ i*image_width+j ];
+      px_used++;
+    }
+  }
+  total = total / px_used;
+
+  return (uchar)total;
+}
+
+/////////////////////////////////// main(): ////////////////////////////////////
 
 int main(int argc, char *argv[])
 {
@@ -184,25 +206,35 @@ int main(int argc, char *argv[])
     exit(EXIT_FAILURE);
   }
 
+  if (mode==0) { ///////////////// Single-threaded CPU version /////////////////
+    for (int row=0; row<image_height; row++) {
+      for (int col=0; col<image_width; col++) {
+	  new_image[row*image_width + col] = average_3x3_CPU(image.data, col, row);
+      }
+    }    
+  }
+
   ///////////////////////////////// GPU code: //////////////////////////////////
 
-  // TODO: only come in here if mode>1
+  int devID;  // which GPU to use
 
-  // Choose the fastest GPU (optional):
-  int devID = gpuGetMaxGflopsDeviceId();
-  checkCudaErrors( cudaSetDevice(devID) );
-  // checkCudaErrors( cudaSetDevice(0) );  // or just use the first GPU
-
-  // Prepare input and output arrays on GPU:
-  checkCudaErrors( cudaMalloc((void**)&old_image_G,image_size*sizeof(uchar)) );
-  checkCudaErrors( cudaMalloc((void**)&new_image_G,image_size*sizeof(uchar)) );
-
-  // Set GPU output to zero (optional):
-  //checkCudaErrors( cudaMemset(new_image_G, 0, image_size) );
-
-  // Copy CPU variables to GPU:
-  checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
-  checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
+  if (mode > 1) {
+    // Choose the fastest GPU (optional):
+    devID = gpuGetMaxGflopsDeviceId();
+    checkCudaErrors( cudaSetDevice(devID) );
+    // checkCudaErrors( cudaSetDevice(0) );  // or just use the first GPU
+    
+    // Prepare input and output arrays on GPU:
+    checkCudaErrors( cudaMalloc((void**)&old_image_G,image_size*sizeof(uchar)) );
+    checkCudaErrors( cudaMalloc((void**)&new_image_G,image_size*sizeof(uchar)) );
+    
+    // Set GPU output to zero (optional):
+    //checkCudaErrors( cudaMemset(new_image_G, 0, image_size) );
+    
+    // Copy CPU variables to GPU:
+    checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
+    checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
+  }
 
   if ((mode == 2) || 
       (mode == 3) || 
@@ -298,11 +330,11 @@ int main(int argc, char *argv[])
   else if (mode == 4) {
     checkCudaErrors( cudaFreeHost(new_image) );
   }
-
-  checkCudaErrors( cudaFree(new_image_G) );
-  checkCudaErrors( cudaFree(old_image_G) );
-  checkCudaErrors( cudaDeviceReset() );
-
+  if (mode > 1) {
+    checkCudaErrors( cudaFree(new_image_G) );
+    checkCudaErrors( cudaFree(old_image_G) );
+    checkCudaErrors( cudaDeviceReset() );
+  }
   exit(EXIT_SUCCESS);
 }
 

@@ -146,6 +146,7 @@ int main(int argc, char *argv[])
     printf("       mode 2 = GPU, global memory, 1d grid\n");
     printf("       mode 3 = GPU, global memory, 2d grid\n");
     printf("       mode 4 = GPU, global memory, 1d grid, 4 streams\n");
+    printf("       mode 5 = GPU, shared memory, 2d grid\n");
     exit(EXIT_FAILURE);
   }
 
@@ -221,6 +222,14 @@ int main(int argc, char *argv[])
 			    ceil((float)image_height / block_dim.y) );
       avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
     }
+    else if (mode == 5) {
+      dim3 block_dim = dim3(32, 32);
+      dim3 grid_dim = dim3( ceil((float)image_width / 30),
+			    ceil((float)image_height / 30) );
+      avg_filter_shared<<<grid_dim,block_dim,32*32*sizeof(uchar)>>>
+	(old_image_G, new_image_G);
+    }
+
     getLastCudaError("Kernel execution failed (avg_filter).");
 
     // Copy result back from GPU:

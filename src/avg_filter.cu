@@ -51,6 +51,26 @@ __device__ uchar average_3x3(uchar *old_image_G, int px_x, int px_y) {
   return (uchar)total;
 }
 
+// Average the pixels in a 3*3 box around pixel (px_x,px_y) of old_image, which
+// is intended to be a 32x32 array in shared memory.  Should only be called for
+// "interior" pixels of full image.
+__device__ uchar average_3x3_shared(uchar *old_image, int px_x, int px_y) {
+  float total = 0;
+  //int px_used = 0;
+
+  int i,j;
+  for (i=px_y-1; i<=px_y+1; i++) {  // loop over 3 rows
+    for (j=px_x-1; j<=px_x+1; j++) {  // loop over 3 cols
+      total += old_image[ i*32+j ];
+      //px_used++;
+    }
+  }
+  //total = total / px_used;
+  total = total / 9;
+
+  return (uchar)total;
+}
+
 // Replace each pixel with a smoothed value.
 // This one uses global memory, and 1d thread/block indexing:
 __global__ void avg_filter(uchar *old_image_G, uchar *new_image_G) {
@@ -83,59 +103,37 @@ __global__ void avg_filter_part(uchar *old_image_G, uchar *new_image_G, int offs
   new_image_G[idx] = average_3x3(old_image_G, px_x, px_y);
 }
 
-/*
-// Replace each pixel with a smoothed value.  (shared memory version,
-// each thread probably has many pixels to process)
-__global__ void lab6_kernel_shared(uchar *GPU_i, uchar *GPU_o, int M, int N, int width)
-{
-  extern __shared__ uchar shared_GPU_i[];
+// Replace each pixel with a smoothed value.
+// This one uses shared memory, with 2d thread/block indexing:
+__global__ void avg_filter_shared(uchar *old_image_G, uchar *new_image_G) {
+  extern __shared__ uchar old_image_shared[];
 
-  // Size of the large box of pixels we're working on.  We expect to
-  // have several pixels per thread:
-  int sm_box_height = M / gridDim.y;
-  int sm_box_width  = N / gridDim.x;
-  int px_per_th_y = sm_box_height/blockDim.y;
-  int px_per_th_x = sm_box_width/blockDim.x;
+  // blocks are 32x32 to process a 30x30 region, so we adjust size and offset to
+  // handle the overlap:
+  int px_x = blockIdx.x * (blockDim.x-2) + (threadIdx.x-1);  // column of image
+  int px_y = blockIdx.y * (blockDim.y-2) + (threadIdx.y-1);  // row of image
 
-  // Indices of first row and column of the global image that this
-  // block will need to process:
-  int top_row  = blockIdx.y * sm_box_height;
-  int left_col = blockIdx.x * sm_box_width;
+  // 32x32 block = 1KB shared memory per block since we're only using
+  // uchars.  but 32x32 blocks using floats or doubles would put us at 32KB or
+  // 64KB assuming 8 blocks per SM.
 
-  // Load data into shared memory.  Note: pixels extending past the
-  // borders of this block will not be included, so there will be
-  // filtering artifacts at the boundaries of each block.
-  int i, j, local_r, local_c, global_offset, local_offset;
-  for (i=0; i < px_per_th_y; i++) {
-    for (j=0; j < px_per_th_x; j++) {
-      local_r = threadIdx.y*px_per_th_y + i;
-      local_c = threadIdx.x*px_per_th_x + j;
+  // do my part to populate the shared memory:
+  if ((px_y < 0) || (px_y >= image_height_G)) { return; }
+  if ((px_x < 0) || (px_x >= image_width_G )) { return; }
+  old_image_shared[ threadIdx.y*blockDim.x + threadIdx.x ] = px_y*image_width_G+px_x;
+  __syncthreads();  // make sure all the data is here before we continue
 
-      //                  row_number     * row_width   +    column_number
-      global_offset = (top_row + local_r)*N            + (left_col + local_c);
-      local_offset  = (          local_r)*sm_box_width + (           local_c);
+  // kill the threads that aren't in the inner 30x30 block:
+  if ( (threadIdx.x ==  0) ||
+       (threadIdx.x == 31) ||
+       (threadIdx.y ==  0) ||
+       (threadIdx.y == 31) )
+    { return; }
 
-      shared_GPU_i[ local_offset ] = GPU_i[ global_offset ];
-    }
-  }
-  __syncthreads();
-
-  // Do the filtering.  It will span the same region we just pre-loaded.
-  for (i=0; i < px_per_th_y; i++) {
-    for (j=0; j < px_per_th_x; j++) {
-      local_r = threadIdx.y*px_per_th_y + i;
-      local_c = threadIdx.x*px_per_th_x + j;
-
-      //                  row_number     * row_width   +    column_number
-      global_offset = (top_row + local_r)*N            + (left_col + local_c);
-      local_offset  = (          local_r)*sm_box_width + (         + local_c);
-
-      GPU_o[ global_offset ] = smoothing_filter(shared_GPU_i, sm_box_height, sm_box_width,
-      				 		local_r, local_c, width, width);
-    }
-  }
+  // compute, and write result back to global memory:
+  new_image_G[px_y*image_width_G+px_x] = average_3x3_shared(old_image_shared, threadIdx.x, threadIdx.y);
+  // TODO: handle borders of image, i.e. when px_x==0 and so on
 }
-*/
 
 ////////////////////////////////// CPU code: ///////////////////////////////////
 

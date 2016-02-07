@@ -106,7 +106,7 @@ __global__ void avg_filter_part(uchar *old_image_G, uchar *new_image_G, int offs
 // Replace each pixel with a smoothed value.
 // This one uses shared memory, with 2d thread/block indexing:
 __global__ void avg_filter_shared(uchar *old_image_G, uchar *new_image_G) {
-  extern __shared__ uchar old_image_shared[];
+  extern __shared__ uchar old_image_shared[];  // extern means we define the size in kernel launch
 
   // blocks are 32x32 to process a 30x30 region, so we adjust size and offset to
   // handle the overlap:
@@ -120,7 +120,7 @@ __global__ void avg_filter_shared(uchar *old_image_G, uchar *new_image_G) {
   // do my part to populate the shared memory:
   if ((px_y < 0) || (px_y >= image_height_G)) { return; }
   if ((px_x < 0) || (px_x >= image_width_G )) { return; }
-  old_image_shared[ threadIdx.y*blockDim.x + threadIdx.x ] = px_y*image_width_G+px_x;
+  old_image_shared[ threadIdx.y*blockDim.x + threadIdx.x ] = old_image_G[ px_y*image_width_G+px_x ];
   __syncthreads();  // make sure all the data is here before we continue
 
   // kill the threads that aren't in the inner 30x30 block:
@@ -204,7 +204,7 @@ int main(int argc, char *argv[])
   checkCudaErrors( cudaMemcpyToSymbol(image_height_G, &image_height, sizeof(int)) );
   checkCudaErrors( cudaMemcpyToSymbol(image_width_G,  &image_width,  sizeof(int)) );
 
-  if ((mode == 2) || (mode == 3)) { ////////// Non-streaming examples //////////
+  if ((mode >= 2) && (mode <= 5)) { ////////// Non-streaming examples //////////
 
     // Copy input image to GPU:
     checkCudaErrors(  cudaMemcpy( old_image_G,
@@ -229,7 +229,6 @@ int main(int argc, char *argv[])
       avg_filter_shared<<<grid_dim,block_dim,32*32*sizeof(uchar)>>>
 	(old_image_G, new_image_G);
     }
-
     getLastCudaError("Kernel execution failed (avg_filter).");
 
     // Copy result back from GPU:

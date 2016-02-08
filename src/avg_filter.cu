@@ -2,6 +2,7 @@
 ////////////////////////////////// Includes: ///////////////////////////////////
 
 #include <stdio.h>
+#include <time.h>
 
 // CUDA stuff:
 #include "cuda_runtime.h"
@@ -164,7 +165,7 @@ int main(int argc, char *argv[])
   if ( argc != 4 ) {
     printf("Usage: %s <input image> <output image> <mode>\n", argv[0]);
     printf("       mode 0 = CPU, single thread\n");
-    printf("       mode 1 = CPU, 4 threads\n");
+    printf("       mode 1 = CPU, 4 threads (not implemented)\n");
     printf("       mode 2 = GPU, global memory, 1d grid\n");
     printf("       mode 3 = GPU, global memory, 2d grid\n");
     printf("       mode 4 = GPU, shared memory, 2d grid\n");
@@ -207,18 +208,32 @@ int main(int argc, char *argv[])
   }
 
   if (mode==0) { ///////////////// Single-threaded CPU version /////////////////
+    clock_t tic, toc;
+    tic = clock();
     for (int row=0; row<image_height; row++) {
       for (int col=0; col<image_width; col++) {
 	  new_image[row*image_width + col] = average_3x3_CPU(image.data, col, row);
       }
     }    
+    toc = clock();
+    printf("CPU time (single thread): %f ms\n", (double)(toc - tic)*1000 / CLOCKS_PER_SEC);
   }
 
   ///////////////////////////////// GPU code: //////////////////////////////////
 
   int devID;  // which GPU to use
 
+  // for timing:
+  cudaEvent_t start, lap1, lap2, stop;
+  float todevms, kernelms, tohostms, total;
+
   if (mode > 1) {
+    // create timers:
+    cudaEventCreate(&start);
+    cudaEventCreate(&lap1);  // after memcpy to GPU
+    cudaEventCreate(&lap2);  // after kernel completes
+    cudaEventCreate(&stop);  // after memcpy to CPU
+
     // Choose the fastest GPU (optional):
     devID = gpuGetMaxGflopsDeviceId();
     checkCudaErrors( cudaSetDevice(devID) );
@@ -240,11 +255,14 @@ int main(int argc, char *argv[])
       (mode == 3) || 
       (mode == 4)) { ///////////////// Non-streaming examples //////////////////
 
+    cudaEventRecord(start);
+
     // Copy input image to GPU:
     checkCudaErrors(  cudaMemcpy( old_image_G,
 				  image.data,
 				  image_size*sizeof(uchar),
 				  cudaMemcpyHostToDevice )  );
+    cudaEventRecord(lap1);
 
     // Run the kernel.  ceil() so we don't miss the end(s) of the image:
     if (mode == 2) {
@@ -265,11 +283,23 @@ int main(int argc, char *argv[])
     }
     getLastCudaError("Kernel execution failed (avg_filter).");
 
+    cudaEventRecord(lap2);
+
     // Copy result back from GPU:
     checkCudaErrors(  cudaMemcpy( new_image,
 				  new_image_G,
 				  image_size*sizeof(uchar),
 				  cudaMemcpyDeviceToHost )  );
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&todevms,  start, lap1);
+    cudaEventElapsedTime(&kernelms, lap1,  lap2);
+    cudaEventElapsedTime(&tohostms, lap2,  stop);
+    cudaEventElapsedTime(&total,    start, stop);
+    // printf("GPU time (memcpy, kernel, memcpy, total): %f, %f, %f, %f ms\n",
+    // 	   todevms, kernelms, tohostms, total);
+    printf("GPU time (incl. main memcpy's): %f ms\n", total);
   }
 
   else if (mode == 5) { ////////////////// Streaming example ///////////////////
@@ -280,6 +310,8 @@ int main(int argc, char *argv[])
     for (int i = 0; i < nStreams; i++) {
       checkCudaErrors( cudaStreamCreate(&stream[i]) );
     }
+
+    cudaEventRecord(start);  // TODO?: force this to happen before any other stream starts
 
     // do {copy to device, launch kernel, copy to host} for each stream:
     for (int i = 0; i < nStreams; i++) {
@@ -309,6 +341,12 @@ int main(int argc, char *argv[])
       checkCudaErrors( cudaStreamDestroy(stream[i]) );
       // cudaStreamDestroy() blocks until all commands in given stream complete
     }
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&total, start, stop);
+    printf("GPU time (incl. main memcpy's): %f ms\n", total);
   }
 
   ////////////////////////// Save the output to disk: //////////////////////////
@@ -334,6 +372,11 @@ int main(int argc, char *argv[])
     checkCudaErrors( cudaFree(new_image_G) );
     checkCudaErrors( cudaFree(old_image_G) );
     checkCudaErrors( cudaDeviceReset() );
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(lap1);
+    cudaEventDestroy(lap2);
+    cudaEventDestroy(stop);
   }
   exit(EXIT_SUCCESS);
 }

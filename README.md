@@ -10,6 +10,6 @@ This code is designed to walk you through optimizing an example GPU application,
 ## TODO
 
 * Finish slides
-* Make CPU example(s)
-* Add timing to each thing
+* Make pthreads example
 * Libraries (how to use, how to make our own)
+* Python example

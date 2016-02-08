@@ -167,8 +167,8 @@ int main(int argc, char *argv[])
     printf("       mode 1 = CPU, 4 threads\n");
     printf("       mode 2 = GPU, global memory, 1d grid\n");
     printf("       mode 3 = GPU, global memory, 2d grid\n");
-    printf("       mode 4 = GPU, global memory, 1d grid, 4 streams\n");
-    printf("       mode 5 = GPU, shared memory, 2d grid\n");
+    printf("       mode 4 = GPU, shared memory, 2d grid\n");
+    printf("       mode 5 = GPU, global memory, 1d grid, 4 streams\n");
     exit(EXIT_FAILURE);
   }
 
@@ -193,10 +193,10 @@ int main(int argc, char *argv[])
   //int chunk_size = image_size / N;
 
   // Prepare CPU output array:
-  if (mode != 4) {
+  if (mode != 5) {
     new_image = (uchar*)malloc( image_height*image_width*sizeof(uchar) );
   }
-  else if (mode == 4) {
+  else if (mode == 5) {
     // need to use pinned memory for streaming
     checkCudaErrors( cudaMallocHost((void**)&new_image, image_height*image_width*sizeof(uchar)) );
   }
@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
 
   if ((mode == 2) || 
       (mode == 3) || 
-      (mode == 5)) { ///////////////// Non-streaming examples //////////////////
+      (mode == 4)) { ///////////////// Non-streaming examples //////////////////
 
     // Copy input image to GPU:
     checkCudaErrors(  cudaMemcpy( old_image_G,
@@ -256,7 +256,7 @@ int main(int argc, char *argv[])
 			    ceil((float)image_height / block_dim.y) );
       avg_filter_2D<<<grid_dim,block_dim>>>(old_image_G, new_image_G);
     }
-    else if (mode == 5) {
+    else if (mode == 4) {
       dim3 block_dim = dim3(32, 32);
       dim3 grid_dim = dim3( ceil((float)image_width / 30),
 			    ceil((float)image_height / 30) );
@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
 				  cudaMemcpyDeviceToHost )  );
   }
 
-  else if (mode == 4) { ////////////////// Streaming example ///////////////////
+  else if (mode == 5) { ////////////////// Streaming example ///////////////////
 
     // Prepare streams:
     int nStreams = 4;
@@ -324,10 +324,10 @@ int main(int argc, char *argv[])
 
   ///////////////////////////// Clean up and exit: /////////////////////////////
 
-  if (mode != 4) {
+  if (mode != 5) {
     free(new_image);
   }
-  else if (mode == 4) {
+  else if (mode == 5) {
     checkCudaErrors( cudaFreeHost(new_image) );
   }
   if (mode > 1) {

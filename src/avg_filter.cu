@@ -18,7 +18,7 @@ using namespace cv;
 
 // These are really only global to match/simplify the pseudocode in the slides.
 
-uchar *old_image;  // original image, CPU-side.  we don't actually use this.
+uchar *old_image;  // original image, CPU-side.  only used for pinned input.
 uchar *new_image;  // processed image, CPU-side
 int image_height;  // number of rows in image
 int image_width;   // number of columns in image
@@ -200,6 +200,8 @@ int main(int argc, char *argv[])
   else if (mode == 5) {
     // need to use pinned memory for streaming
     checkCudaErrors( cudaMallocHost((void**)&new_image, image_height*image_width*sizeof(uchar)) );
+    checkCudaErrors( cudaMallocHost((void**)&old_image, image_height*image_width*sizeof(uchar)) );
+    memcpy(old_image, image.data, image_size);
   }
 
   if (new_image == NULL) {
@@ -319,7 +321,7 @@ int main(int argc, char *argv[])
       int offset = i * image_size*sizeof(uchar)/nStreams;
 
       checkCudaErrors(  cudaMemcpyAsync( &old_image_G[offset],
-					 &image.data[offset],
+					 &old_image[offset],
 					 image_size*sizeof(uchar)/nStreams,
 					 cudaMemcpyHostToDevice,
 					 stream[i] )  );

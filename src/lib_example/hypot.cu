@@ -2,8 +2,6 @@
 #include "device_launch_parameters.h"
 #include "helper_cuda.h"
 
-using namespace std;
-
 __global__ void hypotKernel(float* A, float* B, float* C, int len) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx > len) { return; }
@@ -16,13 +14,15 @@ int gpuHypot(float* A, float* B, float* C, int len) {
   int devID = gpuGetMaxGflopsDeviceId();
   checkCudaErrors( cudaSetDevice(devID) );
 
-  // allocate and initialize GPU memory:
+  // allocate GPU memory:
   float* A_G;
   float* B_G;
   float* C_G;
   checkCudaErrors( cudaMalloc((float**) &A_G, sizeof(float) * len) );
   checkCudaErrors( cudaMalloc((float**) &B_G, sizeof(float) * len) );
   checkCudaErrors( cudaMalloc((float**) &C_G, sizeof(float) * len) );
+  
+  // copy A and B to GPU:
   checkCudaErrors( cudaMemcpy(A_G, A, len*sizeof(float), cudaMemcpyHostToDevice) );
   checkCudaErrors( cudaMemcpy(B_G, B, len*sizeof(float), cudaMemcpyHostToDevice) );
 
@@ -30,7 +30,7 @@ int gpuHypot(float* A, float* B, float* C, int len) {
   hypotKernel <<< len/128 + 1, 128 >>> (A_G, B_G, C_G, len);
   getLastCudaError("Kernel execution failed (hypotKernel)");
 
-  // copy results back to CPU:
+  // copy result back to CPU:
   checkCudaErrors( cudaMemcpy(C, C_G, len*sizeof(float), cudaMemcpyDeviceToHost) );
 
   // Clean up:

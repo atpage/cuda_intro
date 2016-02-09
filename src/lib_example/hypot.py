@@ -18,7 +18,8 @@ except OSError:
 ############################## Parse input args: ##############################
 
 parser = argparse.ArgumentParser(description='Compute hypotenuses for right triangles, ' +\
-                                 'given lists of the other two sides.  Values will be read as floats.  ' +\
+                                 'given lists of the other two sides.  '+\
+                                 'Values will be treated as floats.  ' +\
                                  'Inputs should be ASCII files.')
 parser.add_argument("A", metavar='A.txt', help="List of side 1 values")
 parser.add_argument("B", metavar='B.txt', help="List of side 2 values")
@@ -46,7 +47,7 @@ retval = libhypot.gpuHypot( A_p, B_p, C_p, len(A) )
 if retval:
     print("hypot() failed!")
 
-# Results are now stored in C.
+# Results are already stored in C.
 
 ################################ Save to disk: ################################
 

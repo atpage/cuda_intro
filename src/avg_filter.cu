@@ -373,12 +373,13 @@ int main(int argc, char *argv[])
   if (mode > 1) {
     checkCudaErrors( cudaFree(new_image_G) );
     checkCudaErrors( cudaFree(old_image_G) );
-    checkCudaErrors( cudaDeviceReset() );
 
     cudaEventDestroy(start);
     cudaEventDestroy(lap1);
     cudaEventDestroy(lap2);
     cudaEventDestroy(stop);
+
+    checkCudaErrors( cudaDeviceReset() );
   }
   exit(EXIT_SUCCESS);
 }

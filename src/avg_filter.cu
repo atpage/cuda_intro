@@ -196,17 +196,16 @@ int main(int argc, char *argv[])
   // Prepare CPU output array:
   if (mode != 5) {
     new_image = (uchar*)malloc( image_height*image_width*sizeof(uchar) );
+    if (new_image == NULL) {
+      fprintf(stderr, "Can't malloc space for new_image.  Exiting abruptly.\n");
+      exit(EXIT_FAILURE);
+    }
   }
   else if (mode == 5) {
     // need to use pinned memory for streaming
     checkCudaErrors( cudaMallocHost((void**)&new_image, image_height*image_width*sizeof(uchar)) );
     checkCudaErrors( cudaMallocHost((void**)&old_image, image_height*image_width*sizeof(uchar)) );
     memcpy(old_image, image.data, image_size);
-  }
-
-  if (new_image == NULL) {
-    fprintf(stderr, "Can't malloc space for new_image.  Exiting abruptly.\n");
-    exit(EXIT_FAILURE);
   }
 
   if (mode==0) { ///////////////// Single-threaded CPU version /////////////////
@@ -369,6 +368,7 @@ int main(int argc, char *argv[])
   }
   else if (mode == 5) {
     checkCudaErrors( cudaFreeHost(new_image) );
+    checkCudaErrors( cudaFreeHost(old_image) );
   }
   if (mode > 1) {
     checkCudaErrors( cudaFree(new_image_G) );

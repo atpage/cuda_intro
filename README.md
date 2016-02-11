@@ -2,6 +2,8 @@
 
 This code is designed to walk you through optimizing an example GPU application, starting from the basic CPU version.  The accompanying slides are available [here](https://docs.google.com/presentation/d/1cHeB_jPzqN0Im98ECfBQDQwzlBp3nn0EZ-Yq1ZHGEwA/edit?usp=sharing).
 
+OpenCV is required in the example code simply to load and save an image file.
+
 ## Description of source files
 
 * `avg_filter.cu` is the main code, which demonstrates several different ways to implement a 3x3 image smoothing (averaging) filter on the GPU.
@@ -12,4 +14,4 @@ This code is designed to walk you through optimizing an example GPU application,
 
 * Finish slides
 * Make pthreads example?
-* Libraries (how to use, how to make our own)
+* Libraries (how to use e.g. cuBLAS)
